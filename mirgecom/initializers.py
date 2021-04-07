@@ -955,3 +955,147 @@ class Discontinuity:
 
         return join_conserved(dim=self._dim, mass=mass, energy=energy,
                               momentum=mom)
+
+class MixtureDiscontinuity:
+    r"""Solution initializer for multi-species mixture with a discontinuity.
+
+    This initializer creates a physics-consistent mixture solution
+    given an initial thermal state (pressure, temperature) and a
+    mixture-compatible EOS.
+
+    The solution varies across a planar interface defined by a tanh fucntion
+    located at x=xloc for density, velocity, and pressure
+
+    .. automethod:: __init__
+    .. automethod:: __call__
+    """
+
+    def __init__(
+            self, *, dim=3, x0=0, nspecies=0,
+            tl=300.0, tr=600.0,
+            pl=1.e5, pr=2.e5,
+            ul=None, ur=None,
+            yl=None, yr=None,
+            uc=None, sigma=0.5
+    ):
+        r"""Initialize mixture parameters.
+
+        Parameters
+        ----------
+        dim: int
+            specifies the number of dimensions for the solution
+        x0: float
+           location of discontinuity
+        nspeces: int
+            specifies the number of mixture species
+        pl: float
+            pressure to the left of the discontinuity 
+        tl: float
+            temperature to the left of the discontinuity 
+        ul: numpy.ndarray
+            velocity (vector) to the left of the discontinuity 
+        yl: numpy.ndarray
+            species mass fractions to the left of the discontinuity 
+        pr: float
+            pressure to the right of the discontinuity 
+        tr: float
+            temperaure to the right of the discontinuity 
+        ur: numpy.ndarray
+            velocity (vector) to the right of the discontinuity 
+        yr: numpy.ndarray
+            species mass fractions to the right of the discontinuity 
+        sigma: float
+           sharpness parameter
+        uc: numpy.ndarray
+            convective velocity (discontinuity advection speed)
+        """
+        if ul is None:
+            ul = np.zeros(shape=(dim,))
+        if yl is None:
+            if nspecies > 0:
+                yl = np.zeros(shape=(nspecies,))
+        if ur is None:
+            ur = np.zeros(shape=(dim,))
+        if yr is None:
+            if nspecies > 0:
+                yr = np.zeros(shape=(nspecies,))
+        if uc is None:
+            uc = np.zeros(shape=(dim,))
+
+        self._nspecies = nspecies
+        self._dim = dim
+        self._x0 = x0
+        self._sigma = sigma
+        self._ul = ul
+        self._ur = ur
+        self._uc = uc
+        self._pl = pl
+        self._pr = pr
+        self._tl = tl
+        self._tr = tr
+        self._yl = yl
+        self._yr = yr
+
+
+    def __call__(self, x_vec, eos, *, t=0.0):
+        """
+        Create the mixture state at locations *x_vec* (t is ignored).
+
+        Parameters
+        ----------
+        x_vec: numpy.ndarray
+            Coordinates at which solution is desired
+        eos:
+            Mixture-compatible equation-of-state object must provide
+            these functions:
+            `eos.get_density`
+            `eos.get_internal_energy`
+        t: float
+            Time is ignored by this solution intitializer
+        """
+        if x_vec.shape != (self._dim,):
+            raise ValueError(f"Position vector has unexpected dimensionality,"
+                             f" expected {self._dim}.")
+
+        x_rel = x_vec[0]
+        actx = x_rel.array_context
+        zeros = 0 * x_rel
+        x0 = zeros + self._uc[0]*t + self._x0
+        t = zeros + t
+        ones = (1.0 + x_vec[0]) - x_vec[0]
+        sigma = self._sigma
+
+        pl = self._pl * ones
+        tl = self._tl * ones
+        ul = make_obj_array([self._ul[i] * ones
+                                   for i in range(self._dim)])
+        yl = make_obj_array([self._yl[i] * ones
+                            for i in range(self._nspecies)])
+
+        pr = self._pr * ones
+        tr = self._tr * ones
+        ur = make_obj_array([self._ur[i] * ones
+                                   for i in range(self._dim)])
+        yr = make_obj_array([self._yr[i] * ones
+                            for i in range(self._nspecies)])
+
+        xtanh = 1.0 / sigma * (x_rel - x0)
+        pressure = (pl / 2.0 * (actx.np.tanh(-xtanh) + 1.0)
+              + pr / 2.0 * (actx.np.tanh(xtanh) + 1.0))
+        temperature = (tl / 2.0 * (actx.np.tanh(-xtanh) + 1.0)
+              + tr / 2.0 * (actx.np.tanh(xtanh) + 1.0))
+        y = (yl / 2.0 * (actx.np.tanh(-xtanh) + 1.0)
+              + yr / 2.0 * (actx.np.tanh(xtanh) + 1.0))
+        velocity = (ul / 2.0 * (actx.np.tanh(-xtanh) + 1.0)
+              + ur / 2.0 * (actx.np.tanh(xtanh) + 1.0))
+
+        mass = eos.get_density(pressure, temperature, y)
+        specmass = mass * y
+        mom = mass * velocity
+        internal_energy = eos.get_internal_energy(temperature, y)
+        kinetic_energy = 0.5 * np.dot(velocity, velocity)
+        energy = mass * (internal_energy + kinetic_energy)
+
+        return join_conserved(dim=self._dim, mass=mass, energy=energy,
+                              momentum=mom, species_mass=specmass)
+
