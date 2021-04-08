@@ -39,7 +39,7 @@ THE SOFTWARE.
 from dataclasses import dataclass
 import numpy as np
 from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
-from mirgecom.fluid import ConservedVars
+from mirgecom.fluid import ConservedVars, join_conserved
 
 
 @dataclass
@@ -264,7 +264,7 @@ class PyrometheusMixture(GasEOS):
     Inherits from (and implements) :class:`GasEOS`.
     """
 
-    def __init__(self, pyrometheus_mech, tguess=300.0):
+    def __init__(self, pyrometheus_mech, temperature_guess=300.0):
         """Initialize Pyrometheus-based EOS with mechanism class.
 
         Parameters
@@ -287,7 +287,7 @@ class PyrometheusMixture(GasEOS):
             that is TBD.
         """
         self._pyrometheus_mech = pyrometheus_mech
-        self._tguess = tguess
+        self._tguess = temperature_guess
 
     def gamma(self, cv: ConservedVars = None):
         r"""Get mixture-averaged specific heat ratio for mixture $\frac{C_p}{C_p - R_s}$.
@@ -463,6 +463,5 @@ class PyrometheusMixture(GasEOS):
         mom_source = 0 * cv.momentum
         energy_source = 0 * cv.energy
 
-        from mirgecom.fluid import join_conserved
         return join_conserved(dim, rho_source, energy_source, mom_source,
                               species_sources)
