@@ -844,120 +844,7 @@ class MixtureInitializer:
 
 
 class Discontinuity:
-    r"""Initializes the flow to a discontinuous state.
-
-    The inital condition is defined by a hyperbolic tanh function
-    on a planar interface located at x=xloc for all conserved variables
-
-    This function only serves as an initial condition
-
-    .. automethod:: __init__
-    .. automethod:: __call__
-    """
-
-    def __init__(
-            self, dim=2, x0=0., rhol=0.1, rhor=0.01, pl=20, pr=10.,
-            ul=None, ur=None, uc=None, sigma=0.5
-    ):
-        """Initialize initial condition options.
-
-        Parameters
-        ----------
-        dim: int
-           dimension of domain
-        x0: float
-           location of discontinuity
-        rhol: float
-           density to the left of the discontinuity
-        rhor: float
-           density to the right of the discontinuity
-        pl: float
-           pressure to the left of the discontinuity
-        pr: float
-           pressure to the right of the discontinutiy
-        ul: numpy.ndarray
-            flow velocity to the left of the discontinuity
-        ur: numpy.ndarray
-            flow velocity to the right of the discontinuity
-        uc: numpy.ndarray
-            convective velocity (discontinuity advection speed)
-        sigma: float
-           sharpness parameter
-        """
-        self._dim = dim
-        self._x0 = x0
-        self._rhol = rhol
-        self._rhor = rhor
-        self._pl = pl
-        self._pr = pr
-        self._sigma = sigma
-
-        if ul is None:
-            ul = np.zeros(shape=(dim,))
-        if ur is None:
-            ur = np.zeros(shape=(dim,))
-        if uc is None:
-            uc = np.zeros(shape=(dim,))
-
-        self._ul = ul
-        self._ur = ur
-        self._uc = uc
-
-    def __call__(self, t, x_vec, eos=IdealSingleGas()):
-        r"""
-        Create the discontinuity at locations *x_vec*.
-
-        profile is defined by:
-
-        .. math::
-
-        {\rho} = \frac{{\rho}_{l}}{2}*(tanh(\frac{{x}_{0}-{x}}{\sigma})+1) +
-                 \frac{{\rho}_{r}}{2}*(tanh(\frac{{x}-{x}_{0}}{\sigma})+1)
-
-        Parameters
-        ----------
-        t: float
-            Current time at which the solution is desired (unused)
-        x_vec: numpy.ndarray
-            Nodal coordinates
-        eos: :class:`mirgecom.eos.GasEOS`
-            Equation of state class to be used in construction of soln (if needed)
-        """
-        x_rel = x_vec[0]
-        actx = x_rel.array_context
-        gm1 = eos.gamma() - 1.0
-        zeros = 0 * x_rel
-        sigma = self._sigma
-
-        x0 = zeros + self._uc[0]*t + self._x0
-        t = zeros + t
-        ones = (1.0 + x_vec[0]) - x_vec[0]
-
-        rhol = zeros + self._rhol
-        rhor = zeros + self._rhor
-        ul = make_obj_array([self._ul[i] * ones
-                                   for i in range(self._dim)])
-        ur = make_obj_array([self._ur[i] * ones
-                                   for i in range(self._dim)])
-        rhoel = zeros + self._pl/gm1
-        rhoer = zeros + self._pr/gm1
-
-        xtanh = 1.0 / sigma * (x_rel - x0)
-        mass = (rhol / 2.0 * (actx.np.tanh(-xtanh) + 1.0)
-              + rhor / 2.0 * (actx.np.tanh(xtanh) + 1.0))
-        rhoe = (rhoel / 2.0 * (actx.np.tanh(-xtanh) + 1.0)
-              + rhoer / 2.0 * (actx.np.tanh(xtanh) + 1.0))
-        u = (ul / 2.0 * (actx.np.tanh(-xtanh) + 1.0)
-           + ur / 2.0 * (actx.np.tanh(xtanh) + 1.0))
-        mom = mass * u
-        energy = rhoe + 0.5 * mass * np.dot(u, u)
-
-
-        return join_conserved(dim=self._dim, mass=mass, energy=energy,
-                              momentum=mom)
-
-class MixtureDiscontinuity:
-    r"""Solution initializer for multi-species mixture with a discontinuity.
+    r"""Solution initializer for flow with a discontinuity.
 
     This initializer creates a physics-consistent mixture solution
     given an initial thermal state (pressure, temperature) and a
@@ -989,21 +876,21 @@ class MixtureDiscontinuity:
         nspeces: int
             specifies the number of mixture species
         pl: float
-            pressure to the left of the discontinuity 
+            pressure to the left of the discontinuity
         tl: float
-            temperature to the left of the discontinuity 
+            temperature to the left of the discontinuity
         ul: numpy.ndarray
-            velocity (vector) to the left of the discontinuity 
+            velocity (vector) to the left of the discontinuity
         yl: numpy.ndarray
-            species mass fractions to the left of the discontinuity 
+            species mass fractions to the left of the discontinuity
         pr: float
-            pressure to the right of the discontinuity 
+            pressure to the right of the discontinuity
         tr: float
-            temperaure to the right of the discontinuity 
+            temperaure to the right of the discontinuity
         ur: numpy.ndarray
-            velocity (vector) to the right of the discontinuity 
+            velocity (vector) to the right of the discontinuity
         yr: numpy.ndarray
-            species mass fractions to the right of the discontinuity 
+            species mass fractions to the right of the discontinuity
         sigma: float
            sharpness parameter
         uc: numpy.ndarray
@@ -1038,7 +925,6 @@ class MixtureDiscontinuity:
         self._xdir = xdir
         if self._xdir >= self._dim:
             self._xdir = self._dim - 1
-
 
     def __call__(self, x_vec, eos, *, t=0.0):
         """
@@ -1084,15 +970,6 @@ class MixtureDiscontinuity:
         velocity = ul + (ur - ul)*weight
         y = yl + (yr - yl)*weight
 
-        #pressure = (pl / 2.0 * (actx.np.tanh(-xtanh) + 1.0)
-              #+ pr / 2.0 * (actx.np.tanh(xtanh) + 1.0))
-        #temperature = (tl / 2.0 * (actx.np.tanh(-xtanh) + 1.0)
-              #+ tr / 2.0 * (actx.np.tanh(xtanh) + 1.0))
-        #y = (yl / 2.0 * (actx.np.tanh(-xtanh) + 1.0)
-              #+ yr / 2.0 * (actx.np.tanh(xtanh) + 1.0))
-        #velocity = (ul / 2.0 * (actx.np.tanh(-xtanh) + 1.0)
-              #+ ur / 2.0 * (actx.np.tanh(xtanh) + 1.0))
-
         if self._nspecies:
             mass = eos.get_density(pressure, temperature, y)
         else:
@@ -1103,7 +980,7 @@ class MixtureDiscontinuity:
         if self._nspecies:
             internal_energy = eos.get_internal_energy(temperature, y)
         else:
-            internal_energy = pressure/(eos.gamma() - 1)
+            internal_energy = pressure/mass/(eos.gamma() - 1)
 
         kinetic_energy = 0.5 * np.dot(velocity, velocity)
         energy = mass * (internal_energy + kinetic_energy)
