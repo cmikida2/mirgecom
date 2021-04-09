@@ -857,75 +857,88 @@ class PlanarDiscontinuity:
     """
 
     def __init__(
-            self, *, dim=3, xdir=0, x0=0, nspecies=0,
-            tl=300.0, tr=600.0,
-            pl=1.e5, pr=2.e5,
-            ul=None, ur=None,
-            yl=None, yr=None,
-            uc=None, sigma=0.5
-    ):
+            self, *, dim=3, normal_dir=0, x0=0, nspecies=0, sigma=0.5,
+            temperature_pair=None, pressure_pair=None, velocity_pair=None,
+            convective_velocity=None, species_mass_fraction_pair=None):
         r"""Initialize mixture parameters.
 
         Parameters
         ----------
         dim: int
             specifies the number of dimensions for the solution
-        xdir: int
+        normal_dir: int
             specifies the direction (plane) the discontinuity is applied in
         x0: float
            location of discontinuity
         nspeces: int
             specifies the number of mixture species
-        pl: float
-            pressure to the left of the discontinuity
-        tl: float
-            temperature to the left of the discontinuity
-        ul: numpy.ndarray
-            velocity (vector) to the left of the discontinuity
-        yl: numpy.ndarray
-            species mass fractions to the left of the discontinuity
-        pr: float
-            pressure to the right of the discontinuity
-        tr: float
-            temperaure to the right of the discontinuity
-        ur: numpy.ndarray
-            velocity (vector) to the right of the discontinuity
-        yr: numpy.ndarray
-            species mass fractions to the right of the discontinuity
+        pressure_pair: tuple
+            pressure to the left and right of the discontinuity
+        temperature_pair: tuple
+            temperature to the left and right of the discontinuity
+        velocity_pair: tuple
+            velocity (vector) to the left and right of the discontinuity
+        species_mass_fraction_pair: tuple
+            species mass fractions to the left and right of the discontinuity
         sigma: float
            sharpness parameter
-        uc: numpy.ndarray
+        convective_velocity: numpy.ndarray
             convective velocity (discontinuity advection speed)
         """
-        if ul is None:
-            ul = np.zeros(shape=(dim,))
-        if ur is None:
-            ur = np.zeros(shape=(dim,))
-
-        if yl is None:
-            yl = np.zeros(shape=(nspecies,))
-        if yr is None:
-            yr = np.zeros(shape=(nspecies,))
-
-        if uc is None:
-            uc = np.zeros(shape=(dim,))
-
-        self._nspecies = nspecies
-        self._dim = dim
         self._x0 = x0
         self._sigma = sigma
-        self._ul = ul
-        self._ur = ur
-        self._uc = uc
-        self._pl = pl
-        self._pr = pr
-        self._tl = tl
-        self._tr = tr
-        self._yl = yl
-        self._yr = yr
-        self._xdir = xdir
-        if self._xdir >= self._dim:
-            self._xdir = self._dim - 1
+
+        self._dim = dim
+        if self._dim < 0 or self._dim > 3:
+            raise ValueError("Invalid number of dimensions.")
+        self._xdir = normal_dir
+        if self._xdir >= self._dim or self._xdir < 0:
+            raise ValueError("Shock normal direction invalid.")
+
+        if convective_velocity is None:
+            self._uc = np.zeros(shape=(dim,))
+        else:
+            if len(convective_velocity) != self._dim:
+                raise ValueError("Invalid convective velocity.")
+            self._uc = convective_velocity
+
+        self._nspecies = nspecies
+        if species_mass_fraction_pair is None:
+            self._yl = np.zeros(shape=(self._nspecies,))
+            self._yr = np.zeros(shape=(self._nspecies,))
+        else:
+            if self._nspecies <= 0:
+                self._nspecies = len(species_mass_fraction_pair[0])
+            elif (len(species_mass_fraction_pair[0]) != self._nspecies
+                  or len(species_mass_fraction_pair[1]) != self._nspecies):
+                raise ValueError("Species mass fractions / nspecies mismatch.")
+            else:
+                self._yl = species_mass_fraction_pair[0]
+                self._yr = species_mass_fraction_pair[1]
+
+        if velocity_pair is None:
+            self._ul = np.zeros(shape=(self._dim,))
+            self._ur = np.zeros(shape=(self._dim,))
+        elif ((len(velocity_pair[0]) != self._dim)
+              or (len(velocity_pair[1]) != self._dim)):
+            raise ValueError("Velocities of improper dimension.")
+        else:
+            self._ul = velocity_pair[0]
+            self._ur = velocity_pair[1]
+
+        if pressure_pair is None:
+            self._pl = 1e5
+            self._pr = 2e5
+        else:
+            self._pl = pressure_pair[0]
+            self._pr = pressure_pair[1]
+
+        if temperature_pair is None:
+            self._tl = 300
+            self._tr = 600
+        else:
+            self._tl = temperature_pair[0]
+            self._tr = temperature_pair[1]
 
     def __call__(self, x_vec, eos, *, t=0.0):
         """
