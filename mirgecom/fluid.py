@@ -6,6 +6,7 @@ State Vector Handling
 .. autoclass:: ConservedVars
 .. autofunction:: split_conserved
 .. autofunction:: join_conserved
+.. autofunction:: make_conserved
 
 Helper Functions
 ^^^^^^^^^^^^^^^^
@@ -39,11 +40,19 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
 import numpy as np  # noqa
-from pytools.obj_array import make_obj_array
 from meshmode.dof_array import DOFArray  # noqa
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from arraycontext import (
+    dataclass_array_container,
+    with_container_arithmetic,
+)
 
 
+@with_container_arithmetic(bcast_obj_array=False,
+                           bcast_container_types=(DOFArray, np.ndarray),
+                           matmul=True,
+                           rel_comparison=True)
+@dataclass_array_container
 @dataclass(frozen=True)
 class ConservedVars:
     r"""Store and resolve quantities according to the fluid conservation equations.
@@ -220,9 +229,24 @@ class ConservedVars:
     species_mass: np.ndarray = np.empty((0,), dtype=object)  # empty = immutable
 
     @property
+    def array_context(self):
+        """Return an array context for the :class:`ConservedVars` object."""
+        return self.mass.array_context
+
+    @property
     def dim(self):
         """Return the number of physical dimensions."""
         return len(self.momentum)
+
+    @property
+    def velocity(self):
+        """Return the fluid velocity = momentum / mass."""
+        return self.momentum / self.mass
+
+    @property
+    def species_mass_fractions(self):
+        """Return the species mass fractions y = species_mass / mass."""
+        return self.species_mass / self.mass
 
     def join(self):
         """Call :func:`join_conserved` on *self*."""
@@ -232,6 +256,11 @@ class ConservedVars:
             energy=self.energy,
             momentum=self.momentum,
             species_mass=self.species_mass)
+
+    def __reduce__(self):
+        """Return a tuple reproduction of self for pickling."""
+        return (ConservedVars, tuple(getattr(self, f.name)
+                                    for f in fields(ConservedVars)))
 
     def replace(self, **kwargs):
         """Return a copy of *self* with the attributes in *kwargs* replaced."""
@@ -276,11 +305,8 @@ def split_conserved(dim, q):
                          species_mass=q[2+dim:2+dim+nspec])
 
 
-def join_conserved(dim, mass, energy, momentum,
-        # empty: immutable
-        species_mass=None):
-    """Create agglomerated array from quantities for each conservation eqn."""
-    if species_mass is None:
+def _join_conserved(dim, mass, energy, momentum, species_mass=None):
+    if species_mass is None:  # empty: immutable
         species_mass = np.empty((0,), dtype=object)
 
     nspec = len(species_mass)
@@ -300,6 +326,29 @@ def join_conserved(dim, mass, energy, momentum,
     result[dim+2:] = species_mass
 
     return result
+
+
+def join_conserved(dim, mass, energy, momentum, species_mass=None):
+    """Create agglomerated array from quantities for each conservation eqn."""
+    return _join_conserved(dim, mass=mass, energy=energy,
+                           momentum=momentum, species_mass=species_mass)
+
+
+def make_conserved(dim, mass=None, energy=None, momentum=None, species_mass=None,
+                   q=None, scalar_quantities=None, vector_quantities=None):
+    """Create :class:`ConservedVars` from separated conserved quantities."""
+    if scalar_quantities is not None:
+        return split_conserved(dim, q=scalar_quantities)
+    if vector_quantities is not None:
+        return split_conserved(dim, q=vector_quantities)
+    if q is not None:
+        return split_conserved(dim, q=q)
+    if mass is None or energy is None or momentum is None:
+        raise ValueError("Must have one of *q* or *mass, energy, momentum*.")
+    return split_conserved(
+        dim, _join_conserved(dim, mass=mass, energy=energy,
+                             momentum=momentum, species_mass=species_mass)
+    )
 
 
 def velocity_gradient(discr, cv, grad_cv):
@@ -346,10 +395,7 @@ def velocity_gradient(discr, cv, grad_cv):
         \partial_{x}\mathbf{v}_{y}&\partial_{y}\mathbf{v}_{y} \end{array} \right)$
 
     """
-    velocity = cv.momentum / cv.mass
-    return (1/cv.mass)*make_obj_array([grad_cv.momentum[i]
-                                       - velocity[i]*grad_cv.mass
-                                       for i in range(discr.dim)])
+    return (grad_cv.momentum - np.outer(cv.velocity, grad_cv.mass))/cv.mass
 
 
 def species_mass_fraction_gradient(discr, cv, grad_cv):
@@ -380,14 +426,11 @@ def species_mass_fraction_gradient(discr, cv, grad_cv):
         object array of :class:`~meshmode.dof_array.DOFArray`
         representing $\partial_j{Y}_{\alpha}$.
     """
-    nspecies = len(cv.species_mass)
     y = cv.species_mass / cv.mass
-    return (1/cv.mass)*make_obj_array([grad_cv.species_mass[i]
-                                       - y[i]*grad_cv.mass
-                                       for i in range(nspecies)])
+    return (grad_cv.species_mass - np.outer(y, grad_cv.mass))/cv.mass
 
 
-def compute_wavespeed(dim, eos, cv: ConservedVars):
+def compute_wavespeed(eos, cv: ConservedVars):
     r"""Return the wavespeed in the flow.
 
     The wavespeed is calculated as:
@@ -398,7 +441,6 @@ def compute_wavespeed(dim, eos, cv: ConservedVars):
 
     where $\mathbf{v}$ is the flow velocity and c is the speed of sound in the fluid.
     """
-    actx = cv.mass.array_context
-
-    v = cv.momentum / cv.mass
+    actx = cv.array_context
+    v = cv.velocity
     return actx.np.sqrt(np.dot(v, v)) + eos.sound_speed(cv)
